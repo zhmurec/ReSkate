@@ -30,6 +30,29 @@ Output: keys (time, position, yaw, pitch, roll, field of view) for the free came
 - Key times rise by at least 0.12 s and angles never turn more than half a circle between keys, as the
   [keyframe smoothing](keyframe-smoothing.md) needs (it solves a spline over rising times).
 
+## Key dump (diagnostic, read-only)
+
+Before keys are written into the game, what a key holds has to be read off a real replay: its units, the
+order of its three angles and the unit of its field of view. The dump does that and changes nothing.
+
+- After every key edit in the replay editor the game rebuilds the session's keys; the dump hooks that
+  (the hook the smoothing already has) and writes to `logs\ReSkate.log`, at info level:
+  - the offsets into `Skate.exe` of the code that called the rebuild (`rebuild called from +0x... +0x...`),
+    which is where the code that adds a key is to be looked for;
+  - for every key (up to 64): its time, its raw value (twenty-four 32-bit words from the start of the
+    value, so more than the value holds; a word that isn't a plain float is shown as hex bits) and the
+    free camera's slot as the game's own slot builder makes it, with the floats that Behaviour 1 plays
+    starred (`*`).
+- At most one dump every 1.5 s and sixty a run, so that dragging a key doesn't fill the log.
+- `keydump` in the console (`~`) writes the same for the replay the camera plays now, whenever it is run.
+- Code: [replay_keyframes.cpp](../Extension/ReplayKeyframes/replay_keyframes.cpp) (the walk, with the
+  game's own stepping through its key map and a guard against a fault) and
+  [key_format.cpp](../Extension/AutoCamera/key_format.cpp) (the text, tested).
+
+To use it: put a build's `ReSkate.dll` in the game folder, open a replay in the editor, place three or
+more free-camera keys at positions you can describe (one low and near the skater, one high and far,
+one with the camera tilted, say) and send `logs\ReSkate.log`.
+
 ## Stage 2: into the game
 
 Needed from `Skate.exe` build `20260929`, none of it found yet:

@@ -130,6 +130,7 @@ add_library(dingosdk_runtime SHARED
     Extension/World/spatial_cull_ids.cpp
     Extension/Rendering/display_startup.cpp
     Extension/Rendering/replay_export.cpp
+    Extension/AutoCamera/key_format.cpp
     Extension/ReplayKeyframes/replay_curve.cpp
     Extension/ReplayKeyframes/replay_keyframes.cpp
     Extension/ReplayKeyframes/replay_keyframes_commands.cpp

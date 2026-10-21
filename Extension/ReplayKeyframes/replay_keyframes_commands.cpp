@@ -48,5 +48,12 @@ void register_replay_keyframes_commands(Commands &registry) {
     status.execution = Execution::local;
     status.run = [](const Model &, const Values &, const Output &out) { out(replay_keyframes::status()); };
     registry.add(std::move(status));
+
+    auto dump = action("keydump", "Writes the replay editor's camera keys to the log (logs\\ReSkate.log): each key's raw "
+                       "values and the free camera's slot. For finding out what a key holds; changes nothing",
+                       Group::graphics);
+    dump.execution = Execution::local;
+    dump.run = [](const Model &, const Values &, const Output &out) { out(replay_keyframes::dump_keys()); };
+    registry.add(std::move(dump));
 }
 } // namespace dingosdk::console

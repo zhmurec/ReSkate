@@ -17,6 +17,7 @@ jobs:
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -I. \
             Extension/AutoCamera/auto_camera_plan.cpp \
+            Extension/AutoCamera/key_format.cpp \
             Extension/AutoCamera/Test/auto_camera_tests.cpp \
             -o auto_camera_tests
           ./auto_camera_tests

@@ -1,6 +1,7 @@
 #include "replay_keyframes.h"
 #include "replay_curve.h"
 #include "replay_settings.h"
+#include "Extension/AutoCamera/key_format.h"
 #include "Engine/Core/Hooks/hooks.h"
 #include "Engine/Core/Log/logging.h"
 #include "Engine/Core/Platform/memory.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -196,28 +198,103 @@ void* segment_build(void* manager, void* segment, void* keys_end, void** key) {
     counter.fetch_add(1, std::memory_order_relaxed);
     return result;
 }
+// A session's node in the manager's map (its map: anchor at manager_sessions, root two pointers in, the
+// int id at node + 0x20, ordered by it), or 0 when the manager has no such session.
+std::uintptr_t find_session(std::uintptr_t manager, std::int32_t id) noexcept {
+    std::uintptr_t node{};
+    if (!memory::peek(manager + native::manager_sessions + 2 * sizeof(std::uintptr_t), node)) return 0;
+    for (int depth = 0; node && depth < 64; ++depth) {
+        std::int32_t key{};
+        if (!memory::peek(node + 0x20, key)) return 0;
+        if (key == id) return node;
+        if (!memory::peek(node + (id < key ? sizeof(std::uintptr_t) : 0), node)) return 0;
+    }
+    return 0;
+}
+// Whether the manager still has the session.
+bool has_session(std::uintptr_t manager, std::int32_t id) noexcept { return find_session(manager, id) != 0; }
+
+// ---- Key dump (diagnostic, read-only) ----
+// What a framing key holds is not known yet: units, the order of the angles, the field of view's unit. The
+// dump writes every key of a session to the log, as the game stores it (raw words of its value) and as its
+// slot builder makes it for the free camera, so that the format can be read off a replay whose keys were
+// placed by hand. It changes nothing in the game.
+constexpr std::size_t dump_raw_words = 24;      // 0x60 bytes of a key's value: its size isn't known, so more than it holds
+constexpr std::size_t dump_most_keys = 64;      // keys written per dump
+constexpr int dump_rebuilds = 60;               // rebuilds dumped by themselves per run
+constexpr std::int64_t dump_gap_ms = 1500;      // and at most one in this time, so that dragging a key doesn't use them up
+std::atomic<int> dump_budget{dump_rebuilds};
+std::atomic<std::int64_t> dump_last_ms{-dump_gap_ms};
+
+std::int64_t now_ms() noexcept {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+// A key map's nodes into a plain array. False when the walk lost its way or reading it faulted.
+bool walk_keys(std::uintptr_t keys_end, std::uintptr_t* nodes, std::size_t capacity, std::size_t& count) noexcept {
+    count = 0;
+    __try {
+        for (auto node = at(keys_end + sizeof(std::uintptr_t)); node != keys_end; node = successor(node)) {
+            if (!node || count == capacity) return false;
+            nodes[count++] = node;
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// Writes a session's framing keys to the log. The number of keys, or -1 when the session or the walk is gone.
+int dump_session(std::uintptr_t manager, std::int32_t id, const std::string& why) {
+    if (!slot_build) return -1;
+    const auto node = find_session(manager, id);
+    if (!node) return -1;
+    const auto keys_end = node + 0x20 + native::session_id_before_keys;
+    thread_local std::vector<std::uintptr_t> nodes;
+    nodes.assign(most_keys, 0);
+    std::size_t count{};
+    if (!walk_keys(keys_end, nodes.data(), nodes.size(), count)) return -1;
+    logging::log(logging::Level::info, logging::Channel::runtime, "Keyframe dump ({}): session {}, {} framing key(s){}.", why, id,
+                 count, count > dump_most_keys ? std::format(", the first {} shown", dump_most_keys) : std::string{});
+    for (std::size_t i = 0; i < count && i < dump_most_keys; ++i) {
+        double time{};
+        std::array<std::uint32_t, dump_raw_words> raw{};
+        const bool read = memory::peek(nodes[i] + native::framing_key_time, time) &&
+                          memory::peek_bytes(nodes[i] + native::framing_key_value, raw.data(), sizeof(raw));
+        if (!read) {
+            logging::log(logging::Level::info, logging::Channel::runtime, "Keyframe dump: session {} key {}/{}: unreadable.", id, i + 1, count);
+            continue;
+        }
+        alignas(16) float slot[native::slot_floats]{};
+        slot_build(reinterpret_cast<void*>(manager), reinterpret_cast<const void*>(nodes[i] + native::framing_key_value), time,
+                   native::free_camera_behaviour, 0, slot);
+        logging::log(logging::Level::info, logging::Channel::runtime,
+                     "Keyframe dump: session {} key {}/{} t={:.4f}s | raw value words: {} | free camera slot (* = played): {}", id,
+                     i + 1, count, time, auto_camera::describe_raw(raw), auto_camera::describe_slot(slot, native::behaviour_1_lanes));
+    }
+    return static_cast<int>(count);
+}
+
 // The game's rebuild of a session, which builds all of its segments: the key slots are kept for
-// the length of it (KeySlots).
+// the length of it (KeySlots). Every key edit ends here, so it is also where the keys are dumped, with
+// the code that called it (the caller's addresses are offsets into Skate.exe).
 void session_rebuild(void* manager, int session) {
     struct Rebuilding {
         Rebuilding() { if (rebuilding++ == 0) rebuild_slots.clear(); }
         ~Rebuilding() { if (--rebuilding == 0) rebuild_slots.clear(); }
     } scope;
+    void* frames[8]{};
+    const auto frame_count = CaptureStackBackTrace(1, 8, frames, nullptr);
     rebuild_original.load(std::memory_order_relaxed)(manager, session);
-}
-
-// Whether the manager still has the session (its map: anchor at manager_sessions, root two pointers
-// in, the int id at node + 0x20, ordered by it).
-bool has_session(std::uintptr_t manager, std::int32_t id) noexcept {
-    std::uintptr_t node{};
-    if (!memory::peek(manager + native::manager_sessions + 2 * sizeof(std::uintptr_t), node)) return false;
-    for (int depth = 0; node && depth < 64; ++depth) {
-        std::int32_t key{};
-        if (!memory::peek(node + 0x20, key)) return false;
-        if (key == id) return true;
-        if (!memory::peek(node + (id < key ? sizeof(std::uintptr_t) : 0), node)) return false;
-    }
-    return false;
+    try {
+        const auto now = now_ms();
+        if (manager && slot_build && now - dump_last_ms.load(std::memory_order_relaxed) >= dump_gap_ms &&
+            dump_budget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+            dump_last_ms.store(now, std::memory_order_relaxed);
+            std::string callers;
+            for (unsigned i = 0; i < frame_count; ++i)
+                callers += std::format(" +0x{:x}", reinterpret_cast<std::uintptr_t>(frames[i]) - image);
+            dump_session(reinterpret_cast<std::uintptr_t>(manager), session, "rebuild called from" + callers);
+        }
+    } catch (...) {}
 }
 // The game's rebuild of the session the camera plays, so that its framing segments are built with
 // the new setting. Game thread.
@@ -316,6 +393,22 @@ std::string set_on(bool value) {
 std::string set_smoothness(float value) {
     smooth.store(std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f, std::memory_order_relaxed);
     return changed("Keyframe smoothness " + number(smoothness()) + (on() ? "." : " (smoothing is off)."));
+}
+
+std::string dump_keys() {
+    if (!framing_hooked.load()) return "Keyframe dump is unavailable for this game build.";
+    const auto seen = last_session.load(std::memory_order_relaxed);
+    if (!seen) return "No framing keys built yet: open the replay editor and place or move a key, then run keydump again.";
+    const auto id = static_cast<std::int32_t>(static_cast<std::uint32_t>(seen));
+    std::uintptr_t manager{};
+    if (!memory::peek(image + native::manager, manager) || !manager)
+        return "The replay manager isn't up: open the replay editor first.";
+    int count = -1;
+    try {
+        count = dump_session(manager, id, "keydump");
+    } catch (...) {}
+    if (count < 0) return std::format("The keys of session {} can't be read: the replay is gone. Open it in the editor and try again.", id);
+    return std::format("Wrote {} framing key(s) of session {} to the log (logs\\ReSkate.log), with the code that last rebuilt them.", count, id);
 }
 
 std::string status() {

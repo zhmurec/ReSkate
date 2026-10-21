@@ -2,7 +2,11 @@
 // and the keys rise, the skater stays in frame, the camera is low and wide with a push-in on the trick,
 // a human differs from a tripod only a little, and a clip that can't be shot is refused with a reason.
 #include "Extension/AutoCamera/auto_camera_plan.h"
+#include "Extension/AutoCamera/key_format.h"
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <cmath>
 #include <initializer_list>
 #include <iostream>
@@ -216,10 +220,37 @@ void validate_catches_what_the_game_cannot_play() {
     nan.keys[1].position.x = std::nan("");
     check(!validate(nan, clip, error), "A value that is not a number is caught");
 }
+
+bool has(const std::string& text, const char* piece) { return text.find(piece) != std::string::npos; }
+
+void a_key_is_printed_without_asserting_what_it_means() {
+    // A raw key value: plain floats are shown as numbers, anything else as its bits.
+    float nan = std::nanf("");
+    std::uint32_t nan_bits;
+    std::memcpy(&nan_bits, &nan, sizeof(nan_bits));
+    const std::array<std::uint32_t, 5> words{0x3fc00000u /* 1.5 */, 0u, nan_bits, 0x00000001u /* a tiny non-zero */, 0x7f7fffffu /* huge */};
+    const std::string raw = describe_raw(words);
+    check(has(raw, "0=1.5") && has(raw, " 1=0 "), "Plain floats are shown as numbers");
+    check(has(raw, "2=0x") && has(raw, "3=0x00000001") && has(raw, "4=0x7f7fffff"),
+          "A non-finite, a tiny non-zero and a huge word are shown as bits");
+    check(describe_raw({}).empty(), "No words, no text");
+
+    // A slot: the floats a Behaviour plays carry a star.
+    std::array<float, 24> slot{};
+    for (std::size_t i = 0; i < slot.size(); ++i) slot[i] = static_cast<float>(i) * 0.5f;
+    slot[5] = std::nanf("");
+    const std::string text = describe_slot(slot, dingosdk::addr::replay_keyframes::behaviour_1_lanes);
+    for (const std::size_t played : {12u, 13u, 14u, 4u, 5u, 6u, 21u})
+        check(has(text, (std::to_string(played) + "*=").c_str()), "Each float the free camera plays is starred");
+    check(text.starts_with("0=0 ") && !has(text, " 7*") && !has(text, "23*") && !has(text, " 3*"), "and the others are not");
+    check(has(text, "5*=nan"), "A float that is not finite is printed as it is");
+    check(describe_slot({}, dingosdk::addr::replay_keyframes::behaviour_1_lanes).empty(), "An empty slot prints nothing");
+}
 } // namespace
 
 int main() {
     try {
+        a_key_is_printed_without_asserting_what_it_means();
         the_same_seed_plans_the_same_shot();
         every_plan_is_valid_and_inside_the_clip();
         the_skater_stays_in_frame();

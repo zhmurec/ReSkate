@@ -30,4 +30,8 @@ std::string set_on(bool value);
 std::string set_smoothness(float value);
 // The settings, and how many framing segments were built since the last status.
 std::string status();
+// Diagnostic, read-only (`keydump`): writes the framing keys of the replay the camera plays to the log: each
+// key's raw words and the free camera's slot. The same is written by itself after a key edit (at most one
+// every 1.5 s and sixty a run), with the offsets of the code that called the rebuild. Game thread.
+std::string dump_keys();
 } // namespace dingosdk::replay_keyframes

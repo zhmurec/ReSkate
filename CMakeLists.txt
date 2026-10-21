@@ -395,7 +395,7 @@ if(DINGOSDK_BUILD_AUTO_CAMERA_TESTS)
     # The shot's plan, apart from the game: the same seed plans the same shot, the keys rise inside the clip, the
     # skater stays in frame, the camera is low and wide, and a clip that can't be shot is refused.
     add_executable(dingosdk_auto_camera_tests Extension/AutoCamera/Test/auto_camera_tests.cpp
-        Extension/AutoCamera/auto_camera_plan.cpp)
+        Extension/AutoCamera/auto_camera_plan.cpp Extension/AutoCamera/key_format.cpp)
     target_include_directories(dingosdk_auto_camera_tests PRIVATE "${PROJECT_SOURCE_DIR}")
     add_test(NAME auto_camera COMMAND dingosdk_auto_camera_tests)
 endif()
