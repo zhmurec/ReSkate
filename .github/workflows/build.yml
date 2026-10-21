@@ -1,0 +1,49 @@
+name: Build
+
+# Builds ReSkate.dll and the launcher on Windows (the only platform they build on) and runs the tests
+# of the replay keyframes and the auto camera. A quick Linux job runs the auto camera's plan alone.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  auto-camera-plan-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the auto camera plan tests
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -I. \
+            Extension/AutoCamera/auto_camera_plan.cpp \
+            Extension/AutoCamera/Test/auto_camera_tests.cpp \
+            -o auto_camera_tests
+          ./auto_camera_tests
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake --preset vs2022-x64
+          -DDINGOSDK_BUILD_AUTO_CAMERA_TESTS=ON
+          -DDINGOSDK_BUILD_REPLAY_KEYFRAMES_TESTS=ON
+          -DDINGOSDK_MOD_ID=AutoCamera
+          -DDINGOSDK_MOD_VERSION=0.1.0
+      - name: Build
+        run: cmake --build --preset release --parallel 4
+      - name: Test
+        run: ctest --test-dir build/vs2022-x64 -C Release --output-on-failure
+      - name: Collect the files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build/vs2022-x64/Release/ReSkate.dll dist/
+          Copy-Item build/vs2022-x64/Release/ReSkateLauncher.exe dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReSkate-AutoCamera
+          path: dist/
+          if-no-files-found: error
