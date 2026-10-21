@@ -1,6 +1,7 @@
 name: Build
 
-# Builds ReSkate.dll and the launcher on Windows (the only platform they build on) and runs the tests
+# Builds ReSkate.dll and the launcher on Windows (the only platform they build on), without the Spotify
+# device (it needs a cargo registry the runner lacks: DINGOSDK_CARGO=OFF), and runs the tests
 # of the replay keyframes and the auto camera. A quick Linux job runs the auto camera's plan alone.
 on:
   push:
@@ -29,6 +30,7 @@ jobs:
         shell: bash
         run: |
           cmake --preset vs2022-x64 \
+            "-DDINGOSDK_CARGO=OFF" \
             "-DDINGOSDK_BUILD_AUTO_CAMERA_TESTS=ON" \
             "-DDINGOSDK_BUILD_REPLAY_KEYFRAMES_TESTS=ON" \
             "-DDINGOSDK_MOD_ID=AutoCamera" \
