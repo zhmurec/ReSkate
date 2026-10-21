@@ -26,12 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: >
-          cmake --preset vs2022-x64
-          -DDINGOSDK_BUILD_AUTO_CAMERA_TESTS=ON
-          -DDINGOSDK_BUILD_REPLAY_KEYFRAMES_TESTS=ON
-          -DDINGOSDK_MOD_ID=AutoCamera
-          -DDINGOSDK_MOD_VERSION=0.1.0
+        shell: bash
+        run: |
+          cmake --preset vs2022-x64 \
+            "-DDINGOSDK_BUILD_AUTO_CAMERA_TESTS=ON" \
+            "-DDINGOSDK_BUILD_REPLAY_KEYFRAMES_TESTS=ON" \
+            "-DDINGOSDK_MOD_ID=AutoCamera" \
+            "-DDINGOSDK_MOD_VERSION=0.1.0"
       - name: Build
         run: cmake --build --preset release --parallel 4
       - name: Test
